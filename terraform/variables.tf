@@ -9,7 +9,7 @@ variable "aws_region" {
 variable "repository_name" {
   description = "Name of the ECR repository"
   type        = string
-  default     = "my-springboot-app"
+  default     = "hello-springboot-app"
 }
 
 variable "allowed_aws_account_ids" {
