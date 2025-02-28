@@ -9,7 +9,7 @@ on:
 
 env:
   AWS_REGION: us-west-2
-  ECR_REPOSITORY: my-springboot-app
+  ECR_REPOSITORY: hello-springboot-app
 
 jobs:
   build-test-deploy:
