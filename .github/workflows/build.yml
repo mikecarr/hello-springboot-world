@@ -1,0 +1,107 @@
+name: Build and Deploy Spring Boot to ECR
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: my-springboot-app
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+          server-id: my-repo # Used for authenticating to your Maven repository
+          server-username: MAVEN_USERNAME # Env variable for username
+          server-password: MAVEN_PASSWORD # Env variable for password
+          # Optional: specify custom settings.xml
+          settings-path: ${{ github.workspace }}
+
+      # Alternative: Create custom settings.xml
+      - name: Setup Maven settings.xml
+        if: ${{ env.USE_CUSTOM_SETTINGS == 'true' }}
+        run: |
+          cat > ~/.m2/settings.xml << EOF
+          <settings>
+            <servers>
+              <server>
+                <id>my-repo</id>
+                <username>${{ secrets.MAVEN_USERNAME }}</username>
+                <password>${{ secrets.MAVEN_PASSWORD }}</password>
+              </server>
+            </servers>
+            <mirrors>
+              <mirror>
+                <id>company-mirror</id>
+                <name>Company Maven Repository</name>
+                <url>${{ secrets.MAVEN_REPO_URL }}</url>
+                <mirrorOf>central</mirrorOf>
+              </mirror>
+            </mirrors>
+          </settings>
+          EOF
+
+      - name: Build with Maven
+        run: mvn -B package --file pom.xml
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+
+      - name: Run tests
+        run: mvn test
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Set up S2I (Source-to-Image)
+          curl -s https://api.github.com/repos/openshift/source-to-image/releases/latest | \
+            grep browser_download_url | \
+            grep linux-amd64 | \
+            cut -d '"' -f 4 | \
+            wget -qi -
+          tar -xvf source-to-image-*.tar.gz
+          rm source-to-image-*.tar.gz
+          chmod +x s2i
+          sudo mv s2i /usr/local/bin
+          
+          # Create builder image with s2i
+          s2i build . fabric8/java-centos-openjdk11-jdk:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          
+          # Push the image to ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          
+          # Tag as latest too
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
