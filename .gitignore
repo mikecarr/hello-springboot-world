@@ -31,3 +31,20 @@ build/
 
 ### VS Code ###
 .vscode/
+
+
+
+# Ignore terraform state files
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Ignore AWS credentials files
+.aws/
+aws.config
+credentials.json
+terraform.tfvars
+
+# Ignore environment files
+.env
+*.env
