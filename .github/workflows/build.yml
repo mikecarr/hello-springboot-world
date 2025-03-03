@@ -84,7 +84,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           # Set up S2I (Source-to-Image)
-          curl -s https://api.github.com/repos/openshift/source-to-image/releases/latest | \
+          curl -sL https://api.github.com/repos/openshift/source-to-image/releases/latest | \
             grep browser_download_url | \
             grep linux-amd64 | \
             cut -d '"' -f 4 | \
