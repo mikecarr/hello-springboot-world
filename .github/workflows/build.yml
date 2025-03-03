@@ -83,10 +83,16 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          # # Set up S2I (Source-to-Image)
+          # curl -sL $(curl -sL https://api.github.com/repos/openshift/source-to-image/releases/latest | \
+          #   grep tarball_url | \
+          #   cut -d '"' -f 4) -o source-to-image-latest.tar.gz
+
           # Set up S2I (Source-to-Image)
-          curl -sL $(curl -sL https://api.github.com/repos/openshift/source-to-image/releases/latest | \
-            grep tarball_url | \
-            cut -d '"' -f 4) -o source-to-image-latest.tar.gz
+          curl -sL $(curl -sL https://api.github.com/repos/openshift/source-to-image/releases/tags/v1.4.0 | \
+            grep browser_download_url | \
+            grep linux-amd64 | \
+            cut -d '"' -f 4) -o source-to-image-v1.4.0-linux-amd64.tar.gz
 
          
 
