@@ -89,6 +89,9 @@ jobs:
             grep linux-amd64 | \
             cut -d '"' -f 4 | \
             wget -qi -
+
+          ls -al
+          
           tar -xvf source-to-image-*.tar.gz
           rm source-to-image-*.tar.gz
           chmod +x s2i
