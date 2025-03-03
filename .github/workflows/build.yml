@@ -88,18 +88,15 @@ jobs:
             grep tarball_url | \
             cut -d '"' -f 4) -o source-to-image-latest.tar.gz
 
+         
 
-          touch mikewashere
-          ls -al
-          
-
-          # tar -xvf source-to-image-*.tar.gz
-          # rm source-to-image-*.tar.gz
-          # chmod +x s2i
-          # sudo mv s2i /usr/local/bin
+          tar -xvf source-to-image-*.tar.gz
+          rm source-to-image-*.tar.gz
+          chmod +x s2i
+          sudo mv s2i /usr/local/bin
           
           # # Create builder image with s2i
-          # s2i build . fabric8/java-centos-openjdk11-jdk:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          s2i build . fabric8/java-centos-openjdk11-jdk:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           
           # # Push the image to ECR
           # docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
