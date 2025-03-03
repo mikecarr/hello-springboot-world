@@ -91,6 +91,7 @@ jobs:
             wget -qi -
 
           ls -al
+          wget
 
           # tar -xvf source-to-image-*.tar.gz
           # rm source-to-image-*.tar.gz
