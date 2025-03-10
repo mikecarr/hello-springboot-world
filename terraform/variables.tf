@@ -1,31 +1,28 @@
-# variables.tf
-
 variable "aws_region" {
-  description = "The AWS region in which to create resources"
   type        = string
+  description = "AWS region"
   default     = "us-west-2"
 }
 
 variable "repository_name" {
-  description = "Name of the ECR repository"
   type        = string
-  default     = "hello-springboot-app"
-}
-
-variable "allowed_aws_account_ids" {
-  description = "List of AWS account IDs that are allowed to access the ECR repository"
-  type        = list(string)
-  default     = ["183585643319"] # Replace with your actual account IDs
+  description = "Name of the ECR repository"
 }
 
 variable "tags" {
-  description = "A map of tags to apply to the ECR repository"
   type        = map(string)
-  default     = {
-    Environment = "production"
-    Application = "springboot-app"
-    Terraform   = "true"
-  }
+  description = "Tags to apply to the ECR repository"
+  default     = {}
 }
 
-# We've removed any AWS credential variables that might have been here
+variable "allowed_principal_arns" {
+  type        = list(string)
+  description = "List of IAM role/user/account ARNs allowed to push/pull images from the ECR repository"
+  default     = ["arn:aws:iam::183585643319:user/webdev"] # Example: ["arn:aws:iam::123456789012:role/my-ecr-role"]
+}
+
+variable "default_tags" {
+  type        = map(string)
+  description = "Default tags to apply to all resources"
+  default     = {}
+}

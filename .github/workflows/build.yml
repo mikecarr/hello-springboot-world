@@ -1,107 +1,102 @@
-name: Build and Deploy Spring Boot to ECR
+name: S2I Fuse Java Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:
-
-env:
-  AWS_REGION: us-west-2
-  ECR_REPOSITORY: hello-springboot-app
+    branches: [ main, master ]
 
 jobs:
-  build-test-deploy:
+  s2i-build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
+    
+    env:
+      # Default values that can be overridden via repository secrets or variables
+      BASE_IMAGE: fuse-java-openshift-jdk11-rhel8
+      PATH_CONTEXT: .
+      TLSVERIFY: 'true'
+      MAVEN_ARGS_APPEND: ${{ vars.MAVEN_ARGS_APPEND || '' }}
+      MAVEN_CLEAR_REPO: ${{ vars.MAVEN_CLEAR_REPO || 'false' }}
+      MAVEN_MIRROR_URL: ${{ vars.MAVEN_MIRROR_URL || '' }}
+      IMAGE: ${{ vars.IMAGE_REPOSITORY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
+    
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v3
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
-          server-id: my-repo # Used for authenticating to your Maven repository
-          server-username: MAVEN_USERNAME # Env variable for username
-          server-password: MAVEN_PASSWORD # Env variable for password
-          # Optional: specify custom settings.xml
-          settings-path: ${{ github.workspace }}
-
-      # Alternative: Create custom settings.xml
-      - name: Setup Maven settings.xml
-        if: ${{ env.USE_CUSTOM_SETTINGS == 'true' }}
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Install S2I
         run: |
-          cat > ~/.m2/settings.xml << EOF
-          <settings>
-            <servers>
-              <server>
-                <id>my-repo</id>
-                <username>${{ secrets.MAVEN_USERNAME }}</username>
-                <password>${{ secrets.MAVEN_PASSWORD }}</password>
-              </server>
-            </servers>
-            <mirrors>
-              <mirror>
-                <id>company-mirror</id>
-                <name>Company Maven Repository</name>
-                <url>${{ secrets.MAVEN_REPO_URL }}</url>
-                <mirrorOf>central</mirrorOf>
-              </mirror>
-            </mirrors>
-          </settings>
-          EOF
-
-      - name: Build with Maven
-        run: mvn -B package --file pom.xml
-        env:
-          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
-
-      - name: Run tests
-        run: mvn test
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          # Set up S2I (Source-to-Image)
           curl -s https://api.github.com/repos/openshift/source-to-image/releases/latest | \
-            grep browser_download_url | \
-            grep linux-amd64 | \
-            cut -d '"' -f 4 | \
-            wget -qi -
-          tar -xvf source-to-image-*.tar.gz
-          rm source-to-image-*.tar.gz
-          chmod +x s2i
-          sudo mv s2i /usr/local/bin
+          grep browser_download_url | \
+          grep linux-amd64 | \
+          cut -d '"' -f 4 | \
+          wget -qi -
+          tar -xvf source-to-image*.tar.gz
+          sudo mv s2i /usr/local/bin/
+          rm -f source-to-image*.tar.gz
+      
+      - name: Generate environment file
+        run: |
+          echo "MAVEN_CLEAR_REPO=$MAVEN_CLEAR_REPO" > env-file
           
-          # Create builder image with s2i
-          s2i build . fabric8/java-centos-openjdk11-jdk:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          if [[ '${{ env.MAVEN_ARGS_APPEND }}' != "" ]]; then
+            echo "MAVEN_ARGS_APPEND=${{ env.MAVEN_ARGS_APPEND }}" >> env-file
+          fi
           
-          # Push the image to ECR
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          if [[ '${{ env.MAVEN_MIRROR_URL }}' != "" ]]; then
+            echo "MAVEN_MIRROR_URL=${{ env.MAVEN_MIRROR_URL }}" >> env-file
+          fi
           
-          # Tag as latest too
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          
-          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Generated Env file"
+          echo "------------------------------"
+          cat env-file
+          echo "------------------------------"
+      
+      - name: Pull base image
+        run: |
+          echo ${{ secrets.REGISTRY_PASSWORD }} | docker login ${{ vars.REGISTRY_URL || 'registry.redhat.io' }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+          docker pull ${{ vars.REGISTRY_URL || 'registry.redhat.io' }}/fuse7/${{ env.BASE_IMAGE }}
+      
+      - name: S2I Generate Dockerfile
+        run: |
+          s2i build ${{ env.PATH_CONTEXT }} ${{ vars.REGISTRY_URL || 'registry.redhat.io' }}/fuse7/${{ env.BASE_IMAGE }} \
+            --image-scripts-url image:///usr/local/s2i \
+            --as-dockerfile ./Dockerfile.gen \
+            --environment-file ./env-file
+      
+      - name: Login to container registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ vars.TARGET_REGISTRY || 'ghcr.io' }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.gen
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Extract image digest
+        if: github.event_name != 'pull_request'
+        id: image-digest
+        run: |
+          DIGEST=$(docker inspect ${{ env.IMAGE }} --format='{{index .RepoDigests 0}}' | cut -d'@' -f2)
+          echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_OUTPUT
+          echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
+      
+      - name: Deploy to environment
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "Deploying image ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }} to environment..."
+          # Add your deployment commands here
+          # For example with kubectl:
+          # kubectl set image deployment/your-app your-container=${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
