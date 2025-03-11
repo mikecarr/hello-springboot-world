@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Default values that can be overridden via repository secrets or variables
-      BASE_IMAGE: fuse-java-openshift-jdk11-rhel8
+      BASE_IMAGE: fuse-java-openshift-jdk11-rhel8:latest
       PATH_CONTEXT: .
       TLSVERIFY: 'true'
       MAVEN_ARGS_APPEND: ${{ vars.MAVEN_ARGS_APPEND || '' }}
@@ -17,8 +17,9 @@ jobs:
       MAVEN_MIRROR_URL: ${{ vars.MAVEN_MIRROR_URL || '' }}
       IMAGE: ${{ vars.IMAGE_REPOSITORY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
       # Add ECR related variables
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+      # Just the repository name, not the full URI
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
@@ -36,14 +37,33 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: true
         
       - name: Pull image from ECR
         run: |
-          ECR_IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-          echo "Pulling image from $ECR_IMAGE_URI"
-          docker pull $ECR_IMAGE_URI
-          # Optionally tag it locally if needed
-          docker tag $ECR_IMAGE_URI local-image-name
+          # Get the ECR registry URL
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          
+          # The ECR_REPOSITORY should be just the repository name, not the full URI
+          # Extract just the repository name if full URI was provided
+          REPO_NAME=$(echo "${{ env.ECR_REPOSITORY }}" | awk -F'/' '{print $NF}')
+          
+          # Construct the proper ECR image URI
+          ECR_IMAGE_URI=${ECR_REGISTRY}/${REPO_NAME}:latest
+          
+          echo "ECR Registry: ${ECR_REGISTRY}"
+          echo "Repository Name: ${REPO_NAME}"
+          echo "Pulling image from ${ECR_IMAGE_URI}"
+          
+          # Pull the image
+          docker pull ${ECR_IMAGE_URI}
+          
+          # Tag it with a local name if needed for later steps
+          docker tag ${ECR_IMAGE_URI} local-ecr-image:latest
+          
+          # Verify the image was pulled
+          docker images
           
       - name: Install S2I
         run: |
