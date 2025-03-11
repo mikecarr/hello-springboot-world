@@ -1,15 +1,12 @@
 name: S2I Fuse Java Build
-
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-
 jobs:
   s2i-build:
     runs-on: ubuntu-latest
-    
     env:
       # Default values that can be overridden via repository secrets or variables
       BASE_IMAGE: fuse-java-openshift-jdk11-rhel8
@@ -19,14 +16,35 @@ jobs:
       MAVEN_CLEAR_REPO: ${{ vars.MAVEN_CLEAR_REPO || 'false' }}
       MAVEN_MIRROR_URL: ${{ vars.MAVEN_MIRROR_URL || '' }}
       IMAGE: ${{ vars.IMAGE_REPOSITORY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-    
+      # Add ECR related variables
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
-      
+        
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        
+      - name: Pull image from ECR
+        run: |
+          ECR_IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          echo "Pulling image from $ECR_IMAGE_URI"
+          docker pull $ECR_IMAGE_URI
+          # Optionally tag it locally if needed
+          docker tag $ECR_IMAGE_URI local-image-name
+          
       - name: Install S2I
         run: |
           #curl -s https://api.github.com/repos/openshift/source-to-image/releases/latest | \
@@ -38,36 +56,33 @@ jobs:
           tar -xvf source-to-image*.tar.gz
           sudo mv s2i /usr/local/bin/
           rm -f source-to-image*.tar.gz
-      
+          
       - name: Generate environment file
         run: |
           echo "MAVEN_CLEAR_REPO=$MAVEN_CLEAR_REPO" > env-file
-          
           if [[ '${{ env.MAVEN_ARGS_APPEND }}' != "" ]]; then
             echo "MAVEN_ARGS_APPEND=${{ env.MAVEN_ARGS_APPEND }}" >> env-file
           fi
-          
           if [[ '${{ env.MAVEN_MIRROR_URL }}' != "" ]]; then
             echo "MAVEN_MIRROR_URL=${{ env.MAVEN_MIRROR_URL }}" >> env-file
           fi
-          
           echo "Generated Env file"
           echo "------------------------------"
           cat env-file
           echo "------------------------------"
-      
+          
       - name: Pull base image
         run: |
           echo ${{ secrets.REGISTRY_PASSWORD }} | docker login ${{ vars.REGISTRY_URL || 'registry.redhat.io' }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
           docker pull ${{ vars.REGISTRY_URL || 'registry.redhat.io' }}/fuse7/${{ env.BASE_IMAGE }}
-      
+          
       - name: S2I Generate Dockerfile
         run: |
           s2i build ${{ env.PATH_CONTEXT }} ${{ vars.REGISTRY_URL || 'registry.redhat.io' }}/fuse7/${{ env.BASE_IMAGE }} \
             --image-scripts-url image:///usr/local/s2i \
             --as-dockerfile ./Dockerfile.gen \
             --environment-file ./env-file
-      
+            
       - name: Login to container registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
@@ -75,7 +90,7 @@ jobs:
           registry: ${{ vars.TARGET_REGISTRY || 'ghcr.io' }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+          
       - name: Build and push
         uses: docker/build-push-action@v4
         with:
@@ -85,7 +100,7 @@ jobs:
           tags: ${{ env.IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
+          
       - name: Extract image digest
         if: github.event_name != 'pull_request'
         id: image-digest
@@ -93,7 +108,7 @@ jobs:
           DIGEST=$(docker inspect ${{ env.IMAGE }} --format='{{index .RepoDigests 0}}' | cut -d'@' -f2)
           echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_OUTPUT
           echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
-      
+          
       - name: Deploy to environment
         if: github.event_name != 'pull_request'
         run: |
