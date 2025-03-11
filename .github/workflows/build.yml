@@ -9,14 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Default values that can be overridden via repository secrets or variables
-      BASE_IMAGE: fuse-java-openshift-jdk11-rhel8:latest
       PATH_CONTEXT: .
       TLSVERIFY: 'true'
       MAVEN_ARGS_APPEND: ${{ vars.MAVEN_ARGS_APPEND || '' }}
       MAVEN_CLEAR_REPO: ${{ vars.MAVEN_CLEAR_REPO || 'false' }}
       MAVEN_MIRROR_URL: ${{ vars.MAVEN_MIRROR_URL || '' }}
       IMAGE: ${{ vars.IMAGE_REPOSITORY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-      # Add ECR related variables
+      # ECR related variables
       AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
       # Just the repository name, not the full URI
       ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
@@ -40,14 +39,13 @@ jobs:
         with:
           mask-password: true
         
-      - name: Pull image from ECR
+      - name: Pull base image from ECR
         run: |
           # Get the ECR registry URL
           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
           
-          # The ECR_REPOSITORY should be just the repository name, not the full URI
-          # Extract just the repository name if full URI was provided
-          REPO_NAME=$(echo "${{ env.ECR_REPOSITORY }}" | awk -F'/' '{print $NF}')
+          # Extract just the repository name
+          REPO_NAME="${{ env.ECR_REPOSITORY }}"
           
           # Construct the proper ECR image URI
           ECR_IMAGE_URI=${ECR_REGISTRY}/${REPO_NAME}:latest
@@ -59,15 +57,14 @@ jobs:
           # Pull the image
           docker pull ${ECR_IMAGE_URI}
           
-          # Tag it with a local name if needed for later steps
-          docker tag ${ECR_IMAGE_URI} local-ecr-image:latest
+          # Store the full image URI for later use
+          echo "BASE_IMAGE_URI=${ECR_IMAGE_URI}" >> $GITHUB_ENV
           
           # Verify the image was pulled
           docker images
-          
+
       - name: Install S2I
         run: |
-          #curl -s https://api.github.com/repos/openshift/source-to-image/releases/latest | \
           curl -s https://api.github.com/repos/openshift/source-to-image/releases/tags/v1.4.0 | \
           grep browser_download_url | \
           grep linux-amd64 | \
@@ -91,14 +88,9 @@ jobs:
           cat env-file
           echo "------------------------------"
           
-      - name: Pull base image
-        run: |
-          echo ${{ secrets.REGISTRY_PASSWORD }} | docker login ${{ vars.REGISTRY_URL || 'registry.redhat.io' }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
-          docker pull ${{ vars.REGISTRY_URL || 'registry.redhat.io' }}/fuse7/${{ env.BASE_IMAGE }}
-          
       - name: S2I Generate Dockerfile
         run: |
-          s2i build ${{ env.PATH_CONTEXT }} ${{ vars.REGISTRY_URL || 'registry.redhat.io' }}/fuse7/${{ env.BASE_IMAGE }} \
+          s2i build ${{ env.PATH_CONTEXT }} ${BASE_IMAGE_URI} \
             --image-scripts-url image:///usr/local/s2i \
             --as-dockerfile ./Dockerfile.gen \
             --environment-file ./env-file
