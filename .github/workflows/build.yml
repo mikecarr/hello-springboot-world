@@ -14,11 +14,12 @@ jobs:
       MAVEN_ARGS_APPEND: ${{ vars.MAVEN_ARGS_APPEND || '' }}
       MAVEN_CLEAR_REPO: ${{ vars.MAVEN_CLEAR_REPO || 'false' }}
       MAVEN_MIRROR_URL: ${{ vars.MAVEN_MIRROR_URL || '' }}
-      IMAGE: ${{ vars.IMAGE_REPOSITORY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
       # ECR related variables
       AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
-      # Just the repository name, not the full URI
+      # Base image repository name
       ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
+      # Target repository for the built image
+      TARGET_REPOSITORY: fuse-test-services
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
@@ -95,36 +96,42 @@ jobs:
             --as-dockerfile ./Dockerfile.gen \
             --environment-file ./env-file
             
-      - name: Login to container registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ vars.TARGET_REGISTRY || 'ghcr.io' }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # We don't need a separate login step since we already logged into ECR earlier
           
-      - name: Build and push
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: ./Dockerfile.gen
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.IMAGE }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build and push to ECR
+        if: github.event_name != 'pull_request'
+        run: |
+          # Get the ECR registry URL
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          
+          # Define target image name
+          TARGET_IMAGE="${ECR_REGISTRY}/${{ env.TARGET_REPOSITORY }}:${{ github.sha }}"
+          LATEST_TAG="${ECR_REGISTRY}/${{ env.TARGET_REPOSITORY }}:latest"
+          
+          echo "Building and pushing to ${TARGET_IMAGE}"
+          
+          # Build using the generated Dockerfile
+          docker build -f ./Dockerfile.gen -t ${TARGET_IMAGE} -t ${LATEST_TAG} .
+          
+          # Push the image to ECR
+          docker push ${TARGET_IMAGE}
+          docker push ${LATEST_TAG}
+          
+          # Save the image URI for later steps
+          echo "TARGET_IMAGE=${TARGET_IMAGE}" >> $GITHUB_ENV
           
       - name: Extract image digest
         if: github.event_name != 'pull_request'
         id: image-digest
         run: |
-          DIGEST=$(docker inspect ${{ env.IMAGE }} --format='{{index .RepoDigests 0}}' | cut -d'@' -f2)
+          DIGEST=$(docker inspect ${TARGET_IMAGE} --format='{{index .RepoDigests 0}}' | cut -d'@' -f2)
           echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_OUTPUT
           echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
           
       - name: Deploy to environment
         if: github.event_name != 'pull_request'
         run: |
-          echo "Deploying image ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }} to environment..."
+          echo "Deploying image ${TARGET_IMAGE}@${{ env.IMAGE_DIGEST }} to environment..."
           # Add your deployment commands here
           # For example with kubectl:
           # kubectl set image deployment/your-app your-container=${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
